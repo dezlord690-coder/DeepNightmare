@@ -1,0 +1,61 @@
+{
+  "metadata": {
+    "framework_version": "5.0.0",
+    "environment": "Kali-WSL-Bridge",
+    "last_synced": "2026-02-23"
+  },
+  "phase_1_recon": {
+    "passive_discovery": {
+      "tool": "subfinder",
+      "syntax": "subfinder -d {target} -silent -all",
+      "output_type": "list",
+      "description": "Enumerates subdomains using passive APIs."
+    },
+    "active_probing": {
+      "tool": "httpx",
+      "syntax": "httpx -u {target} -sc -td -title -server -location",
+      "output_type": "json",
+      "description": "Validates live hosts and detects WAF/Tech stack."
+    },
+    "port_analysis": {
+      "tool": "nmap",
+      "syntax": "nmap -sV -T4 -Pn --script=vulners {target}",
+      "output_type": "text",
+      "description": "Standard service detection with CVE cross-referencing."
+    }
+  },
+  "phase_2_vulnerability": {
+    "path_fuzzing": {
+      "tool": "ffuf",
+      "syntax": "ffuf -w /usr/share/wordlists/dirb/common.txt -u {target}/FUZZ -mc 200,301",
+      "output_type": "json",
+      "description": "Directory brute-forcing for hidden endpoints."
+    },
+    "parameter_discovery": {
+      "tool": "arjun",
+      "syntax": "arjun -u {target} -oJ {output}",
+      "output_type": "json",
+      "description": "Finds hidden GET/POST parameters for injection."
+    },
+    "waf_detection": {
+      "tool": "wafw00f",
+      "syntax": "wafw00f {target}",
+      "output_type": "text",
+      "description": "Identifies specific Firewall vendors (Cloudflare, Akamai, etc.)."
+    }
+  },
+  "phase_3_exploitation": {
+    "interactive_shell": {
+      "tool": "weevely",
+      "syntax": "weevely generate {password} {path}",
+      "output_type": "binary",
+      "description": "Generates polymorphic PHP backdoors for persistence."
+    },
+    "sql_injection": {
+      "tool": "sqlmap",
+      "syntax": "sqlmap -u {target} --batch --random-agent --level 3",
+      "output_type": "text",
+      "description": "Automated SQL injection and database takeover."
+    }
+  }
+}
