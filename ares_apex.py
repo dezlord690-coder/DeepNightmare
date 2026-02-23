@@ -7,7 +7,6 @@ from neural_shield import NeuralShield
 from motivation_engine import MotivationEngine
 
 # --- CONFIGURATION ---
-# We now point to the Ollama API instead of local file paths
 OLLAMA_API_URL = "http://127.0.0.1:11434/api/generate"
 MODEL_NAME = "deepseek-r1:1.5b" 
 KALI_BRIDGE_URL = "http://127.0.0.1:9001/exec"
@@ -23,18 +22,32 @@ class DeepNightmareApex:
         print(f"[*] Connection established to Ollama Engine ({MODEL_NAME})")
 
     async def get_ollama_response(self, prompt, system_context=""):
-        """Talks to the Ollama API instead of using llama-cpp-python"""
+        """Talks to the Ollama API with feedback for CPU users"""
         payload = {
             "model": MODEL_NAME,
             "prompt": f"{system_context}\n\n{prompt}",
             "stream": False
         }
+        
+        # CPU can be slow, so we alert the user we are waiting
+        print(f"    ... AI is thinking (this may take 30-60s on CPU) ...", end="\r")
+        
         async with aiohttp.ClientSession() as session:
             try:
-                async with session.post(OLLAMA_API_URL, json=payload) as resp:
+                # Set timeout to 120 seconds for slow CPU processing
+                async with session.post(OLLAMA_API_URL, json=payload, timeout=120) as resp:
                     data = await resp.json()
-                    # DeepSeek-R1 often includes <think> tags; we return the final answer
-                    return data.get('response', "").split("</think>")[-1].strip()
+                    response_text = data.get('response', "")
+                    
+                    # Clean up the output by removing the <think> internal logic
+                    if "</think>" in response_text:
+                        final_output = response_text.split("</think>")[-1].strip()
+                    else:
+                        final_output = response_text.strip()
+                    
+                    # Clear the "thinking" line
+                    print(" " * 60, end="\r") 
+                    return final_output
             except Exception as e:
                 return f"Error connecting to Ollama: {str(e)}"
 
@@ -47,11 +60,12 @@ class DeepNightmareApex:
             history_rows = self.vault.get_brain_context(mission_id=1)
             history_text = "\n".join([f"{h['brain_source']}: {h['command_executed']} -> {h['status']}" for h in history_rows[-5:]])
 
-            # 2. STRATEGIC REASONING (Ollama/DeepSeek)
+            # 2. STRATEGIC REASONING
+            print(f"[*] Analyzing target: {self.target}")
             strategy_prompt = f"Target: {self.target}\nPast Actions:\n{history_text}\nTask: Plan the next move to achieve 90% recon."
             strategy = await self.get_ollama_response(strategy_prompt, "### Instruction: Act as a Strategic Reasoner.")
 
-            # 3. TACTICAL EXECUTION (Ollama/DeepSeek)
+            # 3. TACTICAL EXECUTION
             tactical_prompt = f"Strategy: {strategy}\nProvide the exact Kali command to execute."
             generated_cmd = await self.get_ollama_response(tactical_prompt, "### Instruction: Provide ONLY the Linux command string.")
 
@@ -60,13 +74,14 @@ class DeepNightmareApex:
             
             if is_safe:
                 # 5. EXECUTION VIA KALI BRIDGE
-                print(f"\n[>] {strategy[:100]}...") # Print shortened strategy
+                print(f"\n[>] Strategy: {strategy[:120]}...") 
                 print(f"[>] EXECUTING: {final_cmd}")
                 
                 result = await self.execute_on_kali(final_cmd)
                 
                 # 6. SANITIZATION & LOGGING
-                safe_output = self.shield.sanitize_output(result.get('stdout', ''))
+                stdout_data = result.get('stdout', '') if result else 'No response from bridge'
+                safe_output = self.shield.sanitize_output(stdout_data)
                 self.vault.log_terminal_action(1, "DeepNightmare", final_cmd, safe_output, "Success")
                 
                 # 7. MOTIVATION CHECK
@@ -76,7 +91,8 @@ class DeepNightmareApex:
                 else:
                     print(self.motivator.get_status_message(last_success_time))
 
-            await asyncio.sleep(2) # Prevent CPU throttling
+            print("\n[*] Waiting for next cycle...")
+            await asyncio.sleep(5) 
 
     async def execute_on_kali(self, command):
         async with aiohttp.ClientSession() as session:
@@ -84,6 +100,7 @@ class DeepNightmareApex:
                 async with session.post(KALI_BRIDGE_URL, json={"command": command, "mission_id": 1}, timeout=300) as resp:
                     return await resp.json()
             except Exception as e:
+                print(f"[!] Bridge Error: {str(e)}")
                 return {"stdout": f"Error connecting to Kali Bridge: {str(e)}", "stderr": ""}
 
     def load_manifest(self):
@@ -95,6 +112,9 @@ class DeepNightmareApex:
 
 if __name__ == "__main__":
     target = input("Enter target URL/Domain: ")
+    if not target:
+        target = "binance.com"
+        
     apex = DeepNightmareApex(target)
     try:
         asyncio.run(apex.run_mission())
