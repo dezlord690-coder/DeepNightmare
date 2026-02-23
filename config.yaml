@@ -1,0 +1,26 @@
+# DEEPNIGHTMARE V5 - GLOBAL CONFIGURATION
+mission_profile:
+  target_url: "https://target-bh-program.com"
+  phase_gate_threshold: 90  # Progress % needed to unlock Phase 2
+  log_level: "VERBOSE"
+  auto_mode: false         # Set to true for fully autonomous R-CoT
+
+hardware_optimization:
+  total_ram_gb: 16
+  cpu_threads: 4           # Leave 2-4 threads for the OS/Kali
+  gpu_layers: 0            # Set to 20-30 if using an NVIDIA GPU (RTX series)
+  context_window: 2048     # Limits memory usage per brain
+  batch_size: 512          # Speeds up initial prompt processing
+
+models:
+  reasoner:
+    path: "models/deepseek-r1-1.5b-q4_k_m.gguf"
+    temp: 0.6              # Higher for creative bypass strategies
+  executor:
+    path: "models/deephat-v1-q4_k_m.gguf"
+    temp: 0.1              # Low temp for precise command syntax
+
+network:
+  bridge_host: "127.0.0.1"
+  bridge_port: 9001
+  request_timeout: 600     # 10 minutes for heavy scans
