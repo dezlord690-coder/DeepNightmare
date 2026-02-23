@@ -1,0 +1,21 @@
+{
+  "recon_phase": {
+    "subdomain_discovery": {
+      "tool": "subfinder",
+      "command": "subfinder -d {target} -silent",
+      "description": "Fast passive subdomain discovery"
+    },
+    "web_tech_audit": {
+      "tool": "httpx",
+      "command": "httpx -u {target} -td -title -status-code",
+      "description": "Technology detection and probe"
+    }
+  },
+  "vuln_phase": {
+    "dir_search": {
+      "tool": "ffuf",
+      "command": "ffuf -w {wordlist} -u {target}/FUZZ -mc 200",
+      "description": "Fuzzing for hidden directories"
+    }
+  }
+}
