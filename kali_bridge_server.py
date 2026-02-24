@@ -1,41 +1,58 @@
 import asyncio
 import json
 import subprocess
+import datetime
 from aiohttp import web
 
-# This server listens for instructions from the Windows Brain
 HOST = '127.0.0.1'
 PORT = 9001
 
 async def execute_tool(request):
     """
-    Receives a command, executes it in Kali, and returns the output.
-    Supports asynchronous execution so multiple tools can run at once.
+    Executes commands in Kali. 
+    Supports 'Fire-and-Forget' for multi-terminal workflows.
     """
     data = await request.json()
     command = data.get("command")
     mission_id = data.get("mission_id")
+    is_async = data.get("async_mode", False)
 
-    print(f"[*] Brain signaling: {command}")
+    print(f"[*] [{datetime.datetime.now().strftime('%H:%M:%S')}] Mission {mission_id} -> {command}")
 
-    # Process start - Using Async Subprocess to prevent blocking
+    if is_async:
+        # FIRE-AND-FORGET: Start the process and return immediately
+        asyncio.create_task(run_background_process(command, mission_id))
+        return web.json_response({
+            "status": "Task Started",
+            "command": command,
+            "info": "Execution running in background terminal."
+        })
+    
+    # SYNC MODE: Wait and return result (Standard for quick recon)
     process = await asyncio.create_subprocess_shell(
         command,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE
     )
-
-    # Wait for completion (or you can modify this to stream live logs)
     stdout, stderr = await process.communicate()
     
-    result = {
+    return web.json_response({
         "mission_id": mission_id,
-        "stdout": stdout.decode().strip(),
-        "stderr": stderr.decode().strip(),
+        "stdout": stdout.decode(errors='ignore').strip(),
+        "stderr": stderr.decode(errors='ignore').strip(),
         "exit_code": process.returncode
-    }
+    })
 
-    return web.json_response(result)
+async def run_background_process(command, mission_id):
+    """Handles long-running tools without blocking the Bridge."""
+    process = await asyncio.create_subprocess_shell(
+        command,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE
+    )
+    stdout, stderr = await process.communicate()
+    # In a full setup, you could trigger a webhook here or update a shared log file
+    print(f"[✔] Background Task Finished: {command[:30]}... (Mission: {mission_id})")
 
 async def health_check(request):
     return web.Response(text="DeepNightmare Bridge: ONLINE")
@@ -48,4 +65,5 @@ app.add_routes([
 
 if __name__ == '__main__':
     print(f"🚀 DeepNightmare Kali Bridge starting on {HOST}:{PORT}...")
+    print(f"[*] Multi-Terminal Support: ENABLED")
     web.run_app(app, host=HOST, port=PORT)
