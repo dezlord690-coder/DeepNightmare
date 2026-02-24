@@ -1,10 +1,9 @@
 import random
-import time
-from datetime import datetime
+import datetime
 
 class MotivationEngine:
     def __init__(self):
-        # Categories for the 500 messages
+        # Professional/Tactical response categories
         self.messages = {
             "success": [
                 "BOOM 💥 We hit it! Data is flowing into the vault.",
@@ -28,29 +27,32 @@ class MotivationEngine:
 
     def get_status_message(self, last_update_time, success_found=False):
         """
-        Logic to determine which message to send to the AI Brain.
+        Determines the motivational trigger based on mission telemetry.
+        Standardized to handle datetime objects.
         """
-        current_time = time.time()
-        time_diff = (current_time - last_update_time) / 60  # in minutes
+        now = datetime.datetime.now()
+        
+        # Ensure last_update_time is a datetime object
+        if isinstance(last_update_time, (int, float)):
+            last_update_time = datetime.datetime.fromtimestamp(last_update_time)
 
         if success_found:
             return random.choice(self.messages["success"])
         
-        if time_diff >= 20:
+        # Calculate difference in seconds
+        time_diff_seconds = (now - last_update_time).total_seconds()
+
+        # 20 minutes = 1200 seconds
+        if time_diff_seconds >= 1200:
             return random.choice(self.messages["stagnant"])
         
         return random.choice(self.messages["encouragement"])
 
     def broadcast_to_brains(self, message):
         """
-        Simulates sending the message to the DeepSeek and DeepHat terminals.
+        Visual output for the Omni-Dashboard.
         """
-        timestamp = datetime.now().strftime("%H:%M:%S")
+        timestamp = datetime.datetime.now().strftime("%H:%M:%S")
         formatted_msg = f"[{timestamp}] [MOTIVATION_ENGINE]: {message}"
         print(formatted_msg)
         return formatted_msg
-
-# Example of how the engine integrates with the mission loop:
-# last_action = time.time() 
-# engine = MotivationEngine()
-# print(engine.get_status_message(last_action))
