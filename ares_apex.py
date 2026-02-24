@@ -9,8 +9,7 @@ from motivation_engine import MotivationEngine
 
 # --- CONFIGURATION ---
 OLLAMA_API_URL = "http://127.0.0.1:11434/api/generate"
-BRAIN_ANALYST = "deepseek-r1:1.5b"   # Strategy/Logic
-BRAIN_EXECUTOR = "qwen2.5-coder:0.5b" # Tactical/Commands
+BRAIN_MODEL = "qwen2.5-coder:0.5b" 
 KALI_BRIDGE_URL = "http://127.0.0.1:9001/exec"
 
 class DeepNightmareApex:
@@ -21,10 +20,10 @@ class DeepNightmareApex:
         self.motivator = MotivationEngine()
         self.mission_id = None
         self.is_running = True
-        self.last_update_time = time.time()
+        self.last_success_time = datetime.datetime.now()
 
     async def initialize_mission(self):
-        """Initializes the mission in the Vault and sets ID."""
+        """Sets up the mission and the 100-question intel tracking."""
         try:
             with self.vault.conn:
                 cursor = self.vault.conn.execute(
@@ -32,37 +31,25 @@ class DeepNightmareApex:
                     (self.target, datetime.datetime.now(), 1)
                 )
                 self.mission_id = cursor.lastrowid
-            print(f"[+] MISSION {self.mission_id} INITIALIZED: {self.target}")
+            print(f"[+] MISSION {self.mission_id} START: {self.target}")
         except Exception:
             cursor = self.vault.conn.execute("SELECT id FROM missions WHERE target_url = ?", (self.target,))
             self.mission_id = cursor.fetchone()[0]
             print(f"[*] RESUMING MISSION {self.mission_id}")
 
-    async def get_dual_brain_logic(self, phase_goal):
-        """DeepSeek-R1 analyzes and plans -> DeepHat-V1 writes the command."""
-        history = self.vault.get_brain_context(self.mission_id)
-        history_str = "\n".join([f"{h['command_executed']} -> {h['status']}" for h in history[-5:]])
-
-        # Step 1: DeepSeek Analysis
-        analysis_prompt = f"Target: {self.target}\nPhase Goal: {phase_goal}\nPast Results: {history_str}\nPlan the next precise move."
-        print(f"[*] DeepSeek-R1 Analyzing Strategy...", end="\r")
-        strategy = await self.ask_brain(BRAIN_ANALYST, analysis_prompt, "### Instruction: Act as a Strategic Reasoner.")
-
-        # Step 2: DeepHat (Qwen) Command Generation
-        print(f"[*] DeepHat-V1 Generating Command...", end="\r")
-        command_prompt = f"Strategy: {strategy}\nBased on this strategy, provide ONLY the exact Kali Linux command."
-        command = await self.ask_brain(BRAIN_EXECUTOR, command_prompt, "### Instruction: Output ONLY the bash string.")
-        
-        return strategy, command
-
-    async def ask_brain(self, model, prompt, system):
-        payload = {"model": model, "prompt": f"{system}\n\n{prompt}", "stream": False, "options": {"num_thread": 4}}
+    async def ask_qwen(self, prompt, system_instruction):
+        """Direct communication with the Qwen2.5-Coder brain."""
+        payload = {
+            "model": BRAIN_MODEL,
+            "prompt": f"{system_instruction}\n\nContext: {prompt}",
+            "stream": False,
+            "options": {"temperature": 0.2, "num_thread": 4}
+        }
         async with aiohttp.ClientSession() as session:
             try:
-                async with session.post(OLLAMA_API_URL, json=payload, timeout=90) as resp:
+                async with session.post(OLLAMA_API_URL, json=payload, timeout=60) as resp:
                     data = await resp.json()
-                    res = data.get('response', '')
-                    return res.split("</think>")[-1].strip() # Clean DeepSeek tags
+                    return data.get('response', '').strip()
             except Exception as e:
                 return f"Error: {str(e)}"
 
@@ -70,68 +57,72 @@ class DeepNightmareApex:
         await self.initialize_mission()
         
         while self.is_running:
-            # 1. READ VAULT FOR PHASE GATE
-            stats = self.vault.get_recon_stats(self.target) # Custom method from previous step
+            # 1. ANALYZE CURRENT STATE (Vault Check)
+            stats = self.vault.get_recon_stats(self.target)
             recon_pct = stats.get('recon_pct', 0)
 
+            # PHASE LOGIC: Recon -> Vuln -> Exploit
             if recon_pct < 90:
-                current_goal = "Achieve 90% recon. Map WAF, DNS, Subdomains, and Hosting."
-                phase_label = "PHASE 1: RECON"
+                goal = f"PHASE 1 (RECON): Identify WAF, DNS, and hosting. Current progress: {recon_pct}%."
+                instruction = "You are a lead recon specialist. Suggest the next terminal command."
             else:
-                current_goal = "90% Recon achieved. Identify and exploit vulnerabilities (RCE, SQLi, Smuggling)."
-                phase_label = "PHASE 2: EXPLOITATION"
+                goal = f"PHASE 2 (VULNERABILITY): Recon is at {recon_pct}%. Search for RCE or Request Smuggling."
+                instruction = "You are an exploitation expert. Suggest a high-impact scan command."
 
-            # 2. GENERATE COMMAND
-            strategy, command = await self.get_dual_brain_logic(current_goal)
+            # 2. GENERATE COMMAND (Single Brain, Two-Step logic)
+            print(f"[*] Brain is thinking (Recon: {recon_pct}%)...", end="\r")
+            strategy = await self.ask_qwen(goal, "Provide a brief strategy.")
+            raw_command = await self.ask_qwen(f"Strategy: {strategy}", "Output ONLY the bash command.")
 
             # 3. NEURAL SHIELD VALIDATION
-            is_safe, final_cmd = self.shield.validate_command(command, self.load_manifest())
+            is_safe, final_cmd = self.shield.validate_command(raw_command, self.load_manifest())
 
             if is_safe:
-                print(f"\n[{phase_label}] {strategy[:80]}...")
+                print(f"\n[PHASE {self.vault.get_phase(self.target)}] Strategy: {strategy[:80]}...")
                 print(f"[>] EXECUTING: {final_cmd}")
                 
-                # 4. ASYNC EXECUTION (Doesn't block the next thought)
+                # 4. ASYNC EXECUTION (Multi-Terminal Flow)
                 asyncio.create_task(self.execute_task(final_cmd, strategy))
-                self.last_update_time = time.time()
             else:
-                print(f"[!] SHIELD BLOCKED COMMAND: {command}")
+                print(f"\n[!] SHIELD BLOCKED: {raw_command}")
 
             # 5. MOTIVATION / STAGNATION CHECK
-            await self.check_motivation()
+            await self.check_mission_status()
 
-            await asyncio.sleep(15) # Cool-down between command generations
+            await asyncio.sleep(15) # Prevent CPU lockup
 
     async def execute_task(self, cmd, strategy):
-        """Sends to Kali Bridge and updates Vault upon completion."""
+        """Asynchronously runs command and updates database."""
         async with aiohttp.ClientSession() as session:
             try:
                 async with session.post(KALI_BRIDGE_URL, json={"command": cmd, "mission_id": self.mission_id}, timeout=300) as resp:
                     result = await resp.json()
                     stdout = result.get('stdout', '')
-                    # Self-Healing/Recorrection: If output contains WAF info, update Vault
-                    status = "Success" if stdout else "Finished"
-                    self.vault.log_terminal_action(self.mission_id, "DeepNightmare", cmd, stdout, status)
-                    print(f"\n[✔] TASK COMPLETED. Vault Updated.")
-            except Exception as e:
-                print(f"[!] Bridge Connection Failed: {e}")
+                    
+                    # Log to Vault for Brain to read next cycle
+                    status = "Success" if "open" in stdout.lower() or "found" in stdout.lower() else "Finished"
+                    if status == "Success":
+                        self.last_success_time = datetime.datetime.now()
 
-    async def check_motivation(self):
-        """Checks if 20 minutes have passed without a successful DB update."""
-        if (time.time() - self.last_update_time) > 1200: # 1200s = 20min
-            msg = self.motivator.get_stagnant_message() # "Increase payload!"
-            print(f"\n[!] ALERT: {msg}")
-            self.last_update_time = time.time() # Reset timer
+                    self.vault.log_terminal_action(self.mission_id, "Qwen-Brain", cmd, self.shield.sanitize_output(stdout), status)
+                    print(f"\n[✔] TASK COMPLETE: {cmd[:20]}... Logged to Vault.")
+            except Exception as e:
+                print(f"[!] Bridge Error: {e}")
+
+    async def check_mission_status(self):
+        """Handles the 20-minute stagnation logic and 'BOOM' messages."""
+        msg = self.motivator.get_status_message(self.last_success_time)
+        print(f"[STATUS] {msg}")
 
     def load_manifest(self):
         try:
             with open('tool_manifest.json', 'r') as f: return json.load(f)
-        except: return {}
+        except: return {"approved_tools": ["nmap", "sqlmap", "dirsearch", "wafw00f", "nikto", "curl"]}
 
 if __name__ == "__main__":
-    target = input("Enter target URL/Domain: ")
+    target = input("Enter target URL: ")
     apex = DeepNightmareApex(target)
     try:
         asyncio.run(apex.run_mission())
     except KeyboardInterrupt:
-        print("\n[!] Shutting down DeepNightmare Apex...")
+        print("\n[!] Shutting down DeepNightmare...")
